@@ -5,6 +5,10 @@ from motion.robot_control import InterpreterStates
 import sys, os, math, design, time, datetime
 
 class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
+    DEFAULT_RX = math.pi / 2
+    DEFAULT_RY = 0
+    DEFAULT_RZ = math.pi
+    
     def __init__(self):
         super().__init__()
         self.setupUi(self)
@@ -19,8 +23,26 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
         self.cartActive = False
         self.jointActive = False
 
+        self.points = []
+
         self.labels = [self.lWait, self.lWork, self.lPause, self.lStop]
         self.sliders = [self.s1, self.s2, self.s3, self.s4, self.s5, self.s6]
+
+        self.takeCell = [0.0, 0.0, 0.0]
+        self.takeTrack = 0.0
+
+        self.cells = {
+            1: [0.0, 0.0, 0.0], 2: [0.0, 0.0, 0.0], 3: [0.0, 0.0, 0.0], 4: [0.0, 0.0, 0.0],
+            5: [0.0, 0.0, 0.0], 6: [0.0, 0.0, 0.0], 7: [0.0, 0.0, 0.0], 8: [0.0, 0.0, 0.0],
+            9: [0.0, 0.0, 0.0], 10: [0.0, 0.0, 0.0], 11: [0.0, 0.0, 0.0], 12: [0.0, 0.0, 0.0]
+        }
+        self.cellTracks = {1:1,2:1,3:1,4:1,5:1,6:1,7:1,8:1,9:1,10:1,11:1,12:1}
+
+        self.rejectCell = [0.0, 0.0, 0.0]
+        self.rejectTrack = 0.0
+
+        self.allowed = {'Box1': [1,2,3,4], 'Box2': [5,6,7,8], 'Box3': [9,10,11,12]}
+        self.occupied = [False, False, False, False, False, False, False, False, False, False, False, False, False]
 
         self.btnOnOff.clicked.connect(self.on_off)
         self.btnPause.clicked.connect(self.set_pause)
@@ -50,6 +72,18 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
         self.sb13.valueChanged.connect(self.save_stats_3)
         self.sb23.valueChanged.connect(self.save_stats_3)
 
+        self.btnAddObject.clicked.connect(self.in_next_update)
+        self.btnDeleteLast.clicked.connect(self.in_next_update)
+        self.btnClearSession.clicked.connect(self.in_next_update)
+        self.btnRunSession.clicked.connect(self.in_next_update)
+        self.btnDownloadSession.clicked.connect(self.in_next_update)
+
+        # self.btnAddObject.clicked.connect(self.add_from_cb)
+        # self.btnDeleteLast.clicked.connect(self.delete_last)
+        # self.btnClearSession.clicked.connect(self.clear_list)
+        # self.btnRunSession.clicked.connect(self.run_session)
+        # self.btnDownloadSession.clicked.connect(self.download_session)
+
         self.logs = []
         self.e_logs = []
         self.log_model = QtCore.QStringListModel()
@@ -69,6 +103,10 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
         self.savePoseLogsTime = QtCore.QTimer()
         self.savePoseLogsTime.timeout.connect(self.save_pose_to_log)
 
+        self.session = []
+        self.session_model = QtCore.QStringListModel()
+        self.lvSession.setModel(self.session_model)
+
         self.add_log('Приложение запущено')
 
     def on_off(self):
@@ -76,8 +114,8 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
         if not self.onOff:
             self.robot.engage()
             self.set_lamp_code('0100')
-            # self.pose.start(500)
-            # self.motors.start(500)
+            self.pose.start(500)
+            self.motors.start(500)
             self.savePoseLogsTime.start(10000)
             self.onOff = True
             self.sldLinerTrack.setEnabled(True)
@@ -87,11 +125,13 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
             self.robot.moveToInitialPose()
             self.pose.stop()
             self.motors.stop()
+            self.jointTimer.stop()
+            self.cartTimer.stop()
             self.savePoseLogsTime.stop()
             QtWidgets.QMessageBox.about(self, 'Info', 'Робот завершает работу, подождите некоторое время')
             time.sleep(5)
             self.robot.disengage()
-            self.set_lamp_code('0000')
+            self.set_lamp_code('1000')
             self.onOff = False
             self.btnOnOff.setText('On')
             self.sldLinerTrack.setEnabled(False)
@@ -187,7 +227,7 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
             if not self.jointActive:
                 self.robot.manualJointMode()
                 # self.joint_connect()
-                self.jointTimer.start(150)
+                self.jointTimer.start(25)
                 self.jointActive = True
                 self.update_joint()
                 self.btnManualCart.setEnabled(False)
@@ -208,50 +248,48 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
         else:
             return QtWidgets.QMessageBox.warning(self, 'Error', 'Робот не запущен')
     
-    def cart_connect(self):
-        self.s1.valueChanged.connect(self.update_cart)
-        self.s2.valueChanged.connect(self.update_cart)
-        self.s3.valueChanged.connect(self.update_cart)
+    # def cart_connect(self):
+    #     self.s1.valueChanged.connect(self.update_cart)
+    #     self.s2.valueChanged.connect(self.update_cart)
+    #     self.s3.valueChanged.connect(self.update_cart)
 
-    def cart_disconnect(self):
-        self.s1.valueChanged.disconnect(self.update_cart)
-        self.s2.valueChanged.disconnect(self.update_cart)
-        self.s3.valueChanged.disconnect(self.update_cart)
+    # def cart_disconnect(self):
+    #     self.s1.valueChanged.disconnect(self.update_cart)
+    #     self.s2.valueChanged.disconnect(self.update_cart)
+    #     self.s3.valueChanged.disconnect(self.update_cart)
 
-    def joint_connect(self):
-        self.s1.valueChanged.connect(self.update_joint)
-        self.s2.valueChanged.connect(self.update_joint)
-        self.s3.valueChanged.connect(self.update_joint)
-        self.s4.valueChanged.connect(self.update_joint)
-        self.s5.valueChanged.connect(self.update_joint)
-        self.s6.valueChanged.connect(self.update_joint)
+    # def joint_connect(self):
+    #     self.s1.valueChanged.connect(self.update_joint)
+    #     self.s2.valueChanged.connect(self.update_joint)
+    #     self.s3.valueChanged.connect(self.update_joint)
+    #     self.s4.valueChanged.connect(self.update_joint)
+    #     self.s5.valueChanged.connect(self.update_joint)
+    #     self.s6.valueChanged.connect(self.update_joint)
 
-    def joint_disconnect(self):
-        self.s1.valueChanged.disconnect(self.update_joint)
-        self.s2.valueChanged.disconnect(self.update_joint)
-        self.s3.valueChanged.disconnect(self.update_joint)
-        self.s4.valueChanged.disconnect(self.update_joint)
-        self.s5.valueChanged.disconnect(self.update_joint)
-        self.s6.valueChanged.disconnect(self.update_joint)
+    # def joint_disconnect(self):
+    #     self.s1.valueChanged.disconnect(self.update_joint)
+    #     self.s2.valueChanged.disconnect(self.update_joint)
+    #     self.s3.valueChanged.disconnect(self.update_joint)
+    #     self.s4.valueChanged.disconnect(self.update_joint)
+    #     self.s5.valueChanged.disconnect(self.update_joint)
+    #     self.s6.valueChanged.disconnect(self.update_joint)
 
     def update_cart(self):
-        v1 = self.s1.value() / 1000.0
-        v2 = self.s2.value() / 1000.0
-        v3 = self.s3.value() / 1000.0
+        v1 = self.s1.value() / 100.0
+        v2 = self.s2.value() / 100.0
+        v3 = self.s3.value() / 100.0
         v = [v1, v2, v3, 0.0, 0.0, 0.0]
         self.robot.setCartesianVelocity(v)
-        print(v)
 
     def update_joint(self):
-        v1 = self.s1.value() / 1000.0
-        v2 = self.s2.value() / 1000.0
-        v3 = self.s3.value() / 1000.0
-        v4 = self.s4.value() / 1000.0
-        v5 = self.s5.value() / 1000.0
-        v6 = self.s6.value() / 1000.0
+        v1 = self.s1.value() / 100.0
+        v2 = self.s2.value() / 100.0
+        v3 = self.s3.value() / 100.0
+        v4 = self.s4.value() / 100.0
+        v5 = self.s5.value() / 100.0
+        v6 = self.s6.value() / 100.0
         v = [v1, v2, v3, v4, v5, v6]
         self.robot.setJointVelocity(v)
-        print(v)
 
     def gripper_on_off(self):
         if self.onOff:
@@ -279,14 +317,14 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
     def update_pose(self):
         pose = self.robot.getToolPosition()
 
-        self.twActualToolPose.setItem(0, 0, QtWidgets.QTableWidgetItem(round(pose[0], 3)))
-        self.twActualToolPose.setItem(0, 1, QtWidgets.QTableWidgetItem(round(pose[1], 3)))
-        self.twActualToolPose.setItem(0, 2, QtWidgets.QTableWidgetItem(round(pose[2], 3)))
-        self.twActualToolPose.setItem(0, 3, QtWidgets.QTableWidgetItem(self.gripper))
+        self.twActualToolPose.setItem(0, 0, QtWidgets.QTableWidgetItem(str(round(pose[0], 3))))
+        self.twActualToolPose.setItem(0, 1, QtWidgets.QTableWidgetItem(str(round(pose[1], 3))))
+        self.twActualToolPose.setItem(0, 2, QtWidgets.QTableWidgetItem(str(round(pose[2], 3))))
+        self.twActualToolPose.setItem(0, 3, QtWidgets.QTableWidgetItem(str(self.gripper)))
 
     def save_pose_to_log(self):
         pose = self.robot.getToolPosition()
-        self.add_log(f'Текущая позиция инструмента: [{pose[0]}, {pose[1]}, {pose[2]}]')
+        self.add_log(f'Текущая позиция инструмента: [{round(pose[0], 3)}, {round(pose[1], 3)}, {round(pose[2], 3)}]')
 
     def update_motors(self):
         ticks = self.robot.getMotorPositionTick()
@@ -295,13 +333,13 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
         temperature = self.robot.getActualTemperature()
 
         for i in range(6):
-            self.twMotorsStates.setItem(0, i, QtWidgets.QTableWidgetItem(round(ticks[i], 3)))
+            self.twMotorsStates.setItem(0, i, QtWidgets.QTableWidgetItem(str(round(ticks[i], 3))))
         for i in range(6):
-            self.twMotorsStates.setItem(1, i, QtWidgets.QTableWidgetItem(round(radians[i], 3)))
+            self.twMotorsStates.setItem(1, i, QtWidgets.QTableWidgetItem(str(round(radians[i], 3))))
         for i in range(6):
-            self.twMotorsStates.setItem(2, i, QtWidgets.QTableWidgetItem(round(degrees[i], 3)))
+            self.twMotorsStates.setItem(2, i, QtWidgets.QTableWidgetItem(str(round(degrees[i], 3))))
         for i in range(6):
-            self.twMotorsStates.setItem(3, i, QtWidgets.QTableWidgetItem(round(temperature[i], 3)))
+            self.twMotorsStates.setItem(3, i, QtWidgets.QTableWidgetItem(str(round(temperature[i], 3))))
 
     def save_logs(self):
         filename = self.leLogsPath.text().strip()
@@ -410,6 +448,96 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
     def sld_to_zero(self):
         for sld in self.sliders:
             sld.setValue(0)
+
+    def refresh_session(self):
+        self.session_model.setStringList([f'{i+1}. {x}' for i, x in enumerate(self.session)])
+
+    def add_from_cb(self):
+        if not hasattr(self, 'cbObjects'): return
+        cat = self.cbObjects.currentText().strip()
+        if cat in ['Box1', 'Box2', 'Box3', 'Reject']:
+            self.session.append(cat)
+            self.refresh_session()
+            self.add_log(f'Добавен объект {cat}')
+    
+    def delete_last(self):
+        rem = self.session.pop()
+        self.refresh_session()
+        self.add_log(f'Удалён объект: {rem}')
+    
+    def clear_list(self):
+        self.session.clear()
+        self.refresh_session()
+        self.add_log('Список очищен')
+
+    def chose_slot(self, cat):
+        for i in self.allowed:
+            if not self.occupied[i]:
+                self.occupied[i] = True
+                return i
+        return None
+
+    def pick_and_place(self, dst_pos, dst_track):
+        up = 0.10
+        rx, ry, rz = getattr(self, 'DEFAULT_RX', 0.0), getattr(self, 'DEFAULT_RY', 0.0), getattr(self, 'DEFAULT_RZ', 0.0)
+
+        self.robot.addLinearTrackMove(self.takeTrack)
+        self.robot.addMoveToPointL([Waypoint([*self.takeCell[:2], self.takeCell[2]+up, rx, ry, rz])])
+        self.robot.addMoveToPointL([Waypoint([*self.takeCell, rx, ry, rz])])
+        self.robot.addToolState(1)
+        self.robot.addMoveToPointL([Waypoint([*self.takeCell[:2], self.takeCell[2]+up, rx, ry, rz])])
+
+        self.robot.addLinearTrackMove(dst_track)
+        self.robot.addMoveToPointL([Waypoint([*dst_pos[:2], dst_pos[2]+up, rx, ry, rz])])
+        self.robot.addMoveToPointL([Waypoint([*dst_pos, rx, ry, rz])])
+        self.robot.addToolState(0)
+        self.robot.addMoveToPointL([Waypoint([*dst_pos[:2], dst_pos[2]+up, rx, ry, rz])])
+        self.robot.moveToInitialPose()
+    
+    def run_session(self):
+        if not self.session:
+            QtWidgets.QMessageBox.warning(self, 'Error', 'Очередь отсутствует')
+            return
+        self.add_log('Очередь перемещения началась')
+        try:
+            for i in enumerate(self.session):
+                cat = self.session[i]
+                if cat == 'Reject':
+                    self.pick_and_place(self.rejectCell, self.rejectTrack)
+                else:
+                    slot = self.chose_slot(cat)
+                    if slot is None:
+                        self.add_log('Все слоты заполнены')
+                        continue
+                    self.pick_and_place(self.cells[slot], self.cellTracks[slot])
+                while self.robot.getActualStateOut() != 200:
+                    time.sleep(0.2)
+                self.robot.play()
+            self.add_log('Очередь перемещения завершена')
+        except:
+            return QtWidgets.QMessageBox.warning(self, 'Error', 'Ошибка запуска очереди')
+
+    def download_session(self):
+        filename = self.leSessionPath.text().strip()
+        if not filename:
+            filename, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self, 'Select folder and name your file', QtCore.QDir.homePath(), 'Text Files (*.txt);; All Files (*)'
+            )
+            if not filename:
+                return QtWidgets.QMessageBox.warning(self, 'Error', 'Назовите свой файл')
+        
+        filename = filename if filename.endswith('.txt') else f'{filename}.txt'
+        self.leSessionPath.setText(filename)
+
+        try:
+            with open(filename, 'a', encoding='UTF-8') as f:
+                f.write('\n'.join(self.session) + '\n')
+            self.add_log(f'Очередь сохранена по пути {filename}')
+        except:
+            QtWidgets.QMessageBox.warning(self, 'Error', 'Ошибка сохранения очереди')
+
+    def in_next_update(self):
+        return QtWidgets.QMessageBox.about(self, 'Info', 'Этот функционал будет добавлен в следующих обновлениях!')
 
 def main():
     app = QtWidgets.QApplication(sys.argv)

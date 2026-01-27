@@ -229,7 +229,7 @@
       </layout>
      </item>
      <item>
-      <widget class="QPushButton" name="btnSaveELogs_4">
+      <widget class="QPushButton" name="btnRunSession">
        <property name="text">
         <string>Run Session</string>
        </property>
