@@ -30,11 +30,11 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
 
         self.start_pos = [0.85, -0.19, 0.76]
 
-        self.takeCell = [1.07, -0.54, -0.24]
+        self.takeCell = [1.07, -0.65, -0.21]
         self.takeTrack = 0.0
 
         self.cells = {
-            1: [1.05, 0.08, -0.11], 2: [1.05, 0.26, -0.11]
+            1: [1.05, 0.26, -0.11], 2: [1.05, 0.08, -0.11]
         }
         self.cellTracks = {1:1,2:1}
 
@@ -267,19 +267,19 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
             return QtWidgets.QMessageBox.warning(self, 'Error', 'Робот не запущен')
 
     def update_cart(self):
-        v1 = self.s1.value() / 100.0
-        v2 = self.s2.value() / 100.0
-        v3 = self.s3.value() / 100.0
+        v1 = self.s1.value() / 500.0
+        v2 = self.s2.value() / 500.0
+        v3 = self.s3.value() / 500.0
         v = [v1, v2, v3, 0.0, 0.0, 0.0]
         self.robot.setCartesianVelocity(v)
 
     def update_joint(self):
-        v1 = self.s1.value() / 100.0
-        v2 = self.s2.value() / 100.0
-        v3 = self.s3.value() / 100.0
-        v4 = self.s4.value() / 100.0
-        v5 = self.s5.value() / 100.0
-        v6 = self.s6.value() / 100.0
+        v1 = self.s1.value() / 500.0
+        v2 = self.s2.value() / 500.0
+        v3 = self.s3.value() / 500.0
+        v4 = self.s4.value() / 500.0
+        v5 = self.s5.value() / 500.0
+        v6 = self.s6.value() / 500.0
         v = [v1, v2, v3, v4, v5, v6]
         self.robot.setJointVelocity(v)
 
