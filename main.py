@@ -508,8 +508,8 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
                         self.add_log(f'Требуется освобождение слотов для {cat}')
                         continue
                     self.pick_and_place(self.cells[slot], self.cellTracks[slot])
-                while self.robot.getActualStateOut() != 200:
-                # while self.robot.getActualStateOut() == 200:
+                # while self.robot.getActualStateOut() != 200:
+                while self.robot.getActualStateOut() == 200:
                     time.sleep(0.2)
                 self.add_log(f'Перемещение в коробку {cat} завершено')
                 self.robot.play()
