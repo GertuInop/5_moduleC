@@ -2,7 +2,7 @@ from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtCore import Qt
 from motion.core import RobotControl, LedLamp, Waypoint
 from motion.robot_control import InterpreterStates
-import sys, os, math, design, time, datetime
+import sys, os, math, design, time, datetime, cv2
 import numpy as np
 from ultralytics import YOLO
 
@@ -28,15 +28,17 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
         self.labels = [self.lWait, self.lWork, self.lPause, self.lStop]
         self.sliders = [self.s1, self.s2, self.s3, self.s4, self.s5, self.s6]
 
-        self.takeCell = [0.0, 0.0, 0.0]
+        self.start_pos = [0.85, -0.19, 0.76]
+
+        self.takeCell = [1.07, -0.54, -0.24]
         self.takeTrack = 0.0
 
         self.cells = {
-            1: [0.0, 0.0, 0.0], 2: [0.0, 0.0, 0.0]
+            1: [1.05, 0.08, -0.11], 2: [1.05, 0.26, -0.11]
         }
         self.cellTracks = {1:1,2:1}
 
-        self.rejectCell = [0.0, 0.0, 0.0]
+        self.rejectCell = [1.05, -0.17, -0.109]
         self.rejectTrack = 0.0
 
         self.allowed = {'Box1': [1,2], 'Box2': [], 'Box3': []}
@@ -106,12 +108,26 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
         self.moves_enabled = False
 
         self.cls2cat = {
-            '': 'Box1',
-            '': 'Box2',
-            '': 'Reject'
+            "": "Box1",
+            "": "Box1",
+            "": "Reject"
         }
 
-        self.yolo
+        self.btnCamera.clicked.connect(self.in_next_update)
+        self.btnVideo.clicked.connect(self.in_next_update)
+        self.btnDetectObjects.clicked.connect(self.in_next_update)
+
+        # self.yolo = YOLO('best.pt')
+        self.cap = None
+        self.videoActive = False
+        self.cameraActive = False
+        self.det_objects = False
+        self.det_was_active = False
+        self.people_present = False
+        self._seen, self._ttl = {}, 2000
+
+        self.frame_timer = QtCore.QTimer(self)
+        self.frame_timer.timeout.connect(self.tick)
 
         self.add_log('Приложение запущено')
 
@@ -122,7 +138,7 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
             self.set_lamp_code('0100')
             self.pose.start(500)
             self.motors.start(500)
-            self.savePoseLogsTime.start(10000)
+            self.savePoseLogsTime.start(30000)
             self.onOff = True
             self.sldLinerTrack.setEnabled(True)
             self.btnOnOff.setText('Off')
@@ -270,12 +286,12 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
     def gripper_on_off(self):
         if self.onOff:
             if self.gripper == 0:
-                self.robot.addToolState(1)
+                self.robot.toolON()
                 self.gripper = 1
                 self.btnGripperOnOff.setText('Off')
                 self.add_log('Схват активен')
             elif self.gripper == 1:
-                self.robot.addToolState(0)
+                self.robot.toolOFF()
                 self.gripper = 0
                 self.btnGripperOnOff.setText('On')
                 self.add_log('Схват выключен')
@@ -455,7 +471,7 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
         return None
 
     def pick_and_place(self, dst_pos, dst_track):
-        up = 0.10
+        up = 0.20
         rx, ry, rz = getattr(self, 'DEFAULT_RX', 0.0), getattr(self, 'DEFAULT_RY', 0.0), getattr(self, 'DEFAULT_RZ', 0.0)
 
         self.robot.addMoveToPointL([Waypoint([0.0, 0.0, 0.0, rx, ry, rz])])
@@ -492,8 +508,8 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
                         self.add_log(f'Требуется освобождение слотов для {cat}')
                         continue
                     self.pick_and_place(self.cells[slot], self.cellTracks[slot])
-                # while self.robot.getActualStateOut() != 200:
-                while self.robot.getActualStateOut() == 200:
+                while self.robot.getActualStateOut() != 200:
+                # while self.robot.getActualStateOut() == 200:
                     time.sleep(0.1)
                 self.add_log(f'Перемещение в коробку {cat} завершено')
                 self.robot.play()
@@ -552,6 +568,130 @@ class MainWindow(QtWidgets.QMainWindow, design.Ui_MainWindow):
                 self.add_log('Очередь загружена')
         except:
             QtWidgets.QMessageBox.warning(self, 'Error', 'Ошибка загрузки очереди')
+
+    def Camera(self):
+        if not self.cameraActive:
+            if self.cap:
+                try: self.cap.release()
+                except: pass
+            self.cap = cv2.VideoCapture(0)
+            if not self.cap.isOpened(): self.add_log('Не удалось открыть камеру 0'); return
+            self.videoActive, self.cameraActive = False, True
+            if not self.frame_timer.isActive(): self.frame_timer.start(33)
+            self.add_log('Камера запущена')
+        else:
+            if self.frame_timer.isActive(): self.frame_timer.stop()
+            if self.cap:
+                try: self.cap.release()
+                except: pass
+            self.cap = None
+            self.videoActive = self.cameraActive = False
+            if hasattr(self, 'lCamera1'): self.lCamera1.clear()
+            if hasattr(self, 'lCamera2'): self.lCamera2.clear()
+            self.add_log('Камера остановлена')
+
+    def Video(self):
+        if not self.videoActive:
+            src = '1.webm'
+            if self.cap:
+                try: self.cap.release()
+                except: pass
+            self.cap = cv2.VideoCapture(src)
+            if not self.cap.isOpened(): self.add_log(f'Не удалось открыть видео {src}'); return
+            self.videoActive, self.cameraActive = True, False
+            if not self.frame_timer.isActive(): self.frame_timer.start(33)
+            self.add_log(f'Видео {src} запущено')
+        else:
+            if self.frame_timer.isActive(): self.frame_timer.stop()
+            if self.cap:
+                try: self.cap.release()
+                except: pass
+            self.cap = None
+            self.videoActive = self.cameraActive = False
+            if hasattr(self, 'lCamera1'): self.lCamera1.clear()
+            if hasattr(self, 'lCamera2'): self.lCamera2.clear()
+            self.add_log('Видео остановлено')
+
+    def toggle_objects(self):
+        self.det_objects = not self.det_objects
+        if hasattr(self, 'btnDetectObjects'):
+            self.btnDetectObjects.setText("Stop Detection" if self.det_objects else "Detect Objects")
+        self.add_log("Детекция объектов: ON" if self.det_objects else "Детекция объектов: OFF")
+
+    def _dedup(self, name, cx, cy):
+        k, now = (name, cx//10, cy//10), int(time.time()*1000)
+        if now - self._seen.get(k, 0) < self._ttl: return False
+        self._seen[k] = now; return True
+
+    def _ok(self, name: str) -> bool:
+        name = name.lower()
+        mapping = {
+            '': getattr(self, 'cbBox1', None),
+            '': getattr(self, 'cbBox2', None),
+            '': getattr(self, 'cbReject', None)
+        }
+        w = mapping.get(name)
+        return bool(w and w.isChecked())
+
+    def to_label(self, label: QtWidgets.QLabel, bgr):
+        if label is None: return
+        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        h, w, c = rgb.shape
+        qimg = Qt.QImage(rgb.data, w, h, w * c, Qt.QImage.Format_RGB888)
+        label.setPixmap(Qt.QPixmap.fromImage(qimg).scaled(label.width(), label.height(), QtCore.Qt.KeepAspectRatio))
+
+    def tick(self):
+        if not self.cap:
+            return
+
+        ok, frame = self.cap.read()
+        if not ok:
+            if self.videoActive:
+                self.add_log("Конец видео")
+            if self.frame_timer.isActive():
+                self.frame_timer.stop()
+            if self.cap:
+                try: self.cap.release()
+                except: pass
+            self.cap = None
+            self.videoActive = self.cameraActive = False
+            if hasattr(self, 'lCamera1'): self.to_label(self.lCamera1, img1)
+            if hasattr(self, 'lCamera2'): self.to_label(self.lCamera2, img2)
+            return
+
+        img2 = frame
+        img1 = frame.copy()
+
+        if self.det_objects:
+            try:
+                r = self.yolo(frame, verbose=False, device='cpu')[0]
+
+                if hasattr(r, 'boxes') and r.boxes is not None:
+                    keep = [self._ok(str(self.yolo.names[int(b.cls[0])]).lower()) for b in r.boxes]
+                    if any(keep):
+                        import numpy as np
+                        r.boxes = r.boxes[np.array(keep, dtype=bool)]
+                    else:
+                        r.boxes = r.boxes[:0]
+
+                    for b in r.boxes:
+                        cls_id = int(b.cls[0])
+                        name = str(self.yolo.names[cls_id]).lower()
+                        x1, y1, x2, y2 = map(int, b.xyxy[0])
+                        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                        if self._dedup(name, cx, cy):
+                            self.add_log(f"Detected {name}")
+                            if self.moves_enabled and not self.people_present:
+                                self.run_session_yolo(name)
+                            else:
+                                self.add_log("Перемещение отключено" if not self.moves_enabled else "Ожидание: человек в зоне")
+
+                img1 = r.plot()
+            except Exception as e:
+                self.add_log(f"YOLO error: {e}")
+
+        if hasattr(self, 'lCamera1'): self.to_label(self.lCamera1, img1)
+        if hasattr(self, 'lCamera2'): self.to_label(self.lCamera2, img2)
 
     def in_next_update(self):
         return QtWidgets.QMessageBox.about(self, 'Info', 'Этот функционал будет добавлен в следующих обновлениях!')
